@@ -17,39 +17,16 @@ from torch_utils import misc
 
 #----------------------------------------------------------------------------
 
-# !!! custom
-def load_network_pkl(f, force_fp16=False, custom=False, **ex_kwargs):
-# def load_network_pkl(f, force_fp16=False):
+def load_network_pkl(f, force_fp16=False):
     data = _LegacyUnpickler(f).load()
-    # data = pickle.load(f, encoding='latin1')
 
     # Legacy TensorFlow pickle => convert.
     if isinstance(data, tuple) and len(data) == 3 and all(isinstance(net, _TFNetworkStub) for net in data):
         tf_G, tf_D, tf_Gs = data
-        G = convert_tf_generator(tf_G, custom=custom, **ex_kwargs)
+        G = convert_tf_generator(tf_G)
         D = convert_tf_discriminator(tf_D)
-        G_ema = convert_tf_generator(tf_Gs, custom=custom, **ex_kwargs)
+        G_ema = convert_tf_generator(tf_Gs)
         data = dict(G=G, D=D, G_ema=G_ema)
-# !!! custom
-        assert isinstance(data['G'], torch.nn.Module)
-        assert isinstance(data['D'], torch.nn.Module)
-        nets = ['G', 'D', 'G_ema']
-    elif isinstance(data, _TFNetworkStub):
-        G_ema = convert_tf_generator(data, custom=custom, **ex_kwargs)
-        data = dict(G_ema=G_ema)
-        nets = ['G_ema']
-    else:
-# !!! custom
-        if custom is True:
-            G_ema = custom_generator(data, **ex_kwargs)
-            data = dict(G_ema=G_ema)
-            nets = ['G_ema']
-        else:
-            nets = []
-            for name in ['G', 'D', 'G_ema']:
-                if name in data.keys():
-                    nets.append(name)
-        # print(nets)
 
     # Add missing fields.
     if 'training_set_kwargs' not in data:
@@ -58,13 +35,15 @@ def load_network_pkl(f, force_fp16=False, custom=False, **ex_kwargs):
         data['augment_pipe'] = None
 
     # Validate contents.
+    assert isinstance(data['G'], torch.nn.Module)
+    assert isinstance(data['D'], torch.nn.Module)
     assert isinstance(data['G_ema'], torch.nn.Module)
     assert isinstance(data['training_set_kwargs'], (dict, type(None)))
     assert isinstance(data['augment_pipe'], (torch.nn.Module, type(None)))
 
     # Force FP16.
     if force_fp16:
-        for key in nets: # !!! custom
+        for key in ['G', 'D', 'G_ema']:
             old = data[key]
             kwargs = copy.deepcopy(old.init_kwargs)
             if key.startswith('G'):
@@ -127,30 +106,7 @@ def _populate_module_params(module, *patterns):
 
 #----------------------------------------------------------------------------
 
-# !!! custom
-def custom_generator(data, **ex_kwargs):
-    from training import stylegan2_multi as networks
-    try: # saved? (with new fix)
-        fmap_base = data['G_ema'].synthesis.fmap_base
-    except: # default from original configs
-        fmap_base = 32768 if data['G_ema'].img_resolution >= 512 else 16384
-    kwargs = dnnlib.EasyDict(
-        z_dim           = data['G_ema'].z_dim,
-        c_dim           = data['G_ema'].c_dim,
-        w_dim           = data['G_ema'].w_dim,
-        img_resolution  = data['G_ema'].img_resolution,
-        img_channels    = data['G_ema'].img_channels,
-        init_res        = [4,4], # hacky
-        mapping_kwargs  = dnnlib.EasyDict(num_layers = data['G_ema'].mapping.num_layers),
-        synthesis_kwargs = dnnlib.EasyDict(channel_base = fmap_base, **ex_kwargs),
-    )
-    G_out = networks.Generator(**kwargs).eval().requires_grad_(False)
-    misc.copy_params_and_buffers(data['G_ema'], G_out, require_all=False)
-    return G_out
-
-# !!! custom
-def convert_tf_generator(tf_G, custom=False, **ex_kwargs):
-# def convert_tf_generator(tf_G):
+def convert_tf_generator(tf_G):
     if tf_G.version < 4:
         raise ValueError('TensorFlow pickle version too low')
 
@@ -164,13 +120,13 @@ def convert_tf_generator(tf_G, custom=False, **ex_kwargs):
 
     # Convert kwargs.
     kwargs = dnnlib.EasyDict(
-        z_dim                   = kwarg('latent_size',          512),
+        z_dim                   = kwarg('latent_size',          1024),
         c_dim                   = kwarg('label_size',           0),
-        w_dim                   = kwarg('dlatent_size',         512),
+        w_dim                   = kwarg('dlatent_size',         1024),
         img_resolution          = kwarg('resolution',           1024),
         img_channels            = kwarg('num_channels',         3),
         mapping_kwargs = dnnlib.EasyDict(
-            num_layers          = kwarg('mapping_layers',       8),
+            num_layers          = kwarg('mapping_layers',       4),
             embed_features      = kwarg('label_fmaps',          None),
             layer_features      = kwarg('mapping_fmaps',        None),
             activation          = kwarg('mapping_nonlinearity', 'lrelu'),
@@ -179,7 +135,7 @@ def convert_tf_generator(tf_G, custom=False, **ex_kwargs):
         ),
         synthesis_kwargs = dnnlib.EasyDict(
             channel_base        = kwarg('fmap_base',            16384) * 2,
-            channel_max         = kwarg('fmap_max',             512),
+            channel_max         = kwarg('fmap_max',             1024),
             num_fp16_res        = kwarg('num_fp16_res',         0),
             conv_clamp          = kwarg('conv_clamp',           None),
             architecture        = kwarg('architecture',         'skip'),
@@ -187,26 +143,22 @@ def convert_tf_generator(tf_G, custom=False, **ex_kwargs):
             use_noise           = kwarg('use_noise',            True),
             activation          = kwarg('nonlinearity',         'lrelu'),
         ),
-# !!! custom
-        # init_res                = kwarg('init_res',            [4,4]),
     )
+    print(kwargs)
 
     # Check for unknown kwargs.
     kwarg('truncation_psi')
     kwarg('truncation_cutoff')
     kwarg('style_mixing_prob')
     kwarg('structure')
+    try:
+        del tf_kwargs["resolution_h"]
+        del tf_kwargs["resolution_w"]
+    except:
+        pass
     unknown_kwargs = list(set(tf_kwargs.keys()) - known_kwargs)
-# !!! custom
-    if custom:
-        kwargs.init_res = [4,4]
-        kwargs.synthesis_kwargs = dnnlib.EasyDict(**kwargs.synthesis_kwargs, **ex_kwargs)
     if len(unknown_kwargs) > 0:
-        raise ValueError('Unknown TensorFlow kwargs:', unknown_kwargs)
-        # raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
-    # try: 
-        # if ex_kwargs['verbose'] is True: print(kwargs.synthesis_kwargs)
-    # except: pass
+        raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
 
     # Collect params.
     tf_params = _collect_tf_params(tf_G)
@@ -219,10 +171,7 @@ def convert_tf_generator(tf_G, custom=False, **ex_kwargs):
     #for name, value in tf_params.items(): print(f'{name:<50s}{list(value.shape)}')
 
     # Convert params.
-    if custom:
-        from training import stylegan2_multi as networks
-    else:
-        from training import networks
+    from training import networks
     G = networks.Generator(**kwargs).eval().requires_grad_(False)
     # pylint: disable=unnecessary-lambda
     _populate_module_params(G,
@@ -296,16 +245,16 @@ def convert_tf_discriminator(tf_D):
             lr_multiplier       = kwarg('mapping_lrmul',        0.1),
         ),
         epilogue_kwargs = dnnlib.EasyDict(
-            mbstd_group_size    = kwarg('mbstd_group_size',     None),
-            mbstd_num_channels  = kwarg('mbstd_num_features',   1),
+            mbstd_group_size    = kwarg('mbstd_group_size',     32),
+            mbstd_num_channels  = kwarg('mbstd_num_features',   4),
             activation          = kwarg('nonlinearity',         'lrelu'),
         ),
-# !!! custom
-        # init_res                = kwarg('init_res',            [4,4]),
     )
 
     # Check for unknown kwargs.
     kwarg('structure')
+    del tf_kwargs["resolution_h"]
+    del tf_kwargs["resolution_w"]
     unknown_kwargs = list(set(tf_kwargs.keys()) - known_kwargs)
     if len(unknown_kwargs) > 0:
         raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])

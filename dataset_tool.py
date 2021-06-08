@@ -13,7 +13,6 @@ import os
 import pickle
 import sys
 import tarfile
-import gzip
 import zipfile
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Union
@@ -70,6 +69,9 @@ def open_image_folder(source_dir, *, max_images: Optional[int]):
             arch_fname = os.path.relpath(fname, source_dir)
             arch_fname = arch_fname.replace('\\', '/')
             img = np.array(PIL.Image.open(fname))
+            # ignore monochrome image
+            if len(img.shape) == 2 or img.shape[2] == 1:
+                continue
             yield dict(img=img, label=labels.get(arch_fname))
             if idx >= max_idx-1:
                 break
@@ -166,36 +168,6 @@ def open_cifar10(tarball: str, *, max_images: Optional[int]):
 
 #----------------------------------------------------------------------------
 
-def open_mnist(images_gz: str, *, max_images: Optional[int]):
-    labels_gz = images_gz.replace('-images-idx3-ubyte.gz', '-labels-idx1-ubyte.gz')
-    assert labels_gz != images_gz
-    images = []
-    labels = []
-
-    with gzip.open(images_gz, 'rb') as f:
-        images = np.frombuffer(f.read(), np.uint8, offset=16)
-    with gzip.open(labels_gz, 'rb') as f:
-        labels = np.frombuffer(f.read(), np.uint8, offset=8)
-
-    images = images.reshape(-1, 28, 28)
-    images = np.pad(images, [(0,0), (2,2), (2,2)], 'constant', constant_values=0)
-    assert images.shape == (60000, 32, 32) and images.dtype == np.uint8
-    assert labels.shape == (60000,) and labels.dtype == np.uint8
-    assert np.min(images) == 0 and np.max(images) == 255
-    assert np.min(labels) == 0 and np.max(labels) == 9
-
-    max_idx = maybe_min(len(images), max_images)
-
-    def iterate_images():
-        for idx, img in enumerate(images):
-            yield dict(img=img, label=int(labels[idx]))
-            if idx >= max_idx-1:
-                break
-
-    return max_idx, iterate_images()
-
-#----------------------------------------------------------------------------
-
 def make_transform(
     transform: Optional[str],
     output_width: Optional[int],
@@ -256,11 +228,10 @@ def open_dataset(source, *, max_images: Optional[int]):
         else:
             return open_image_folder(source, max_images=max_images)
     elif os.path.isfile(source):
-        if os.path.basename(source) == 'cifar-10-python.tar.gz':
+        if source.endswith('cifar-10-python.tar.gz'):
             return open_cifar10(source, max_images=max_images)
-        elif os.path.basename(source) == 'train-images-idx3-ubyte.gz':
-            return open_mnist(source, max_images=max_images)
-        elif file_ext(source) == 'zip':
+        ext = file_ext(source)
+        if ext == 'zip':
             return open_image_zip(source, max_images=max_images)
         else:
             assert False, 'unknown archive type'
@@ -325,40 +296,19 @@ def convert_dataset(
     The input dataset format is guessed from the --source argument:
 
     \b
-    --source *_lmdb/                    Load LSUN dataset
-    --source cifar-10-python.tar.gz     Load CIFAR-10 dataset
-    --source train-images-idx3-ubyte.gz Load MNIST dataset
-    --source path/                      Recursively load all images from path/
-    --source dataset.zip                Recursively load all images from dataset.zip
+    --source *_lmdb/                - Load LSUN dataset
+    --source cifar-10-python.tar.gz - Load CIFAR-10 dataset
+    --source path/                  - Recursively load all images from path/
+    --source dataset.zip            - Recursively load all images from dataset.zip
 
-    Specifying the output format and path:
+    The output dataset format can be either an image folder or a zip archive.  Specifying
+    the output format and path:
 
     \b
-    --dest /path/to/dir                 Save output files under /path/to/dir
-    --dest /path/to/dataset.zip         Save output files into /path/to/dataset.zip
-
-    The output dataset format can be either an image folder or an uncompressed zip archive.
-    Zip archives makes it easier to move datasets around file servers and clusters, and may
-    offer better training performance on network file systems.
+    --dest /path/to/dir             - Save output files under /path/to/dir
+    --dest /path/to/dataset.zip     - Save output files into /path/to/dataset.zip archive
 
     Images within the dataset archive will be stored as uncompressed PNG.
-    Uncompresed PNGs can be efficiently decoded in the training loop.
-
-    Class labels are stored in a file called 'dataset.json' that is stored at the
-    dataset root folder.  This file has the following structure:
-
-    \b
-    {
-        "labels": [
-            ["00000/img00000000.png",6],
-            ["00000/img00000001.png",9],
-            ... repeated for every image in the datase
-            ["00049/img00049999.png",1]
-        ]
-    }
-
-    If the 'dataset.json' file cannot be found, the dataset is interpreted as
-    not containing class labels.
 
     Image scale/crop and resolution requirements:
 
@@ -423,7 +373,8 @@ def convert_dataset(
                 error('Image width/height after scale and crop are required to be power-of-two')
         elif dataset_attrs != cur_image_attrs:
             err = [f'  dataset {k}/cur image {k}: {dataset_attrs[k]}/{cur_image_attrs[k]}' for k in dataset_attrs.keys()]
-            error(f'Image {archive_fname} attributes must be equal across all images of the dataset.  Got:\n' + '\n'.join(err))
+            print(f'Image {archive_fname} attributes must be equal across all images of the dataset.  Got:\n' + '\n'.join(err))
+            continue
 
         # Save the image as an uncompressed PNG.
         img = PIL.Image.fromarray(img, { 1: 'L', 3: 'RGB' }[channels])

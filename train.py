@@ -45,7 +45,8 @@ def setup_training_loop_kwargs(
 
     # Base config.
     cfg        = None, # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
-    lrate      = None, # Override learning rate
+    glrate     = None, # Override Generator learning rate
+    dlrate     = None, # Override Discriminator learning rate
     gamma      = None, # Override R1 gamma: <float>
     kimg       = None, # Override training duration: <int>
     nkimg      = None, # Override starting count
@@ -65,7 +66,6 @@ def setup_training_loop_kwargs(
     # Performance options (not included in desc).
     fp32       = None, # Disable mixed-precision training: <bool>, default = False
     nhwc       = None, # Use NHWC memory format with FP16: <bool>, default = False
-    allow_tf32 = None, # Allow PyTorch to use TF32 for matmul and convolutions: <bool>, default = False
     nobench    = None, # Disable cuDNN benchmarking: <bool>, default = False
     workers    = None, # Override number of DataLoader workers: <int>, default = 3
 ):
@@ -193,10 +193,6 @@ def setup_training_loop_kwargs(
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
 
-    if lrate is not None:
-        assert isinstance(lrate, float)
-        spec.lrate = lrate
-
     args.G_kwargs = dnnlib.EasyDict(class_name='training.networks.Generator', z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
     args.D_kwargs = dnnlib.EasyDict(class_name='training.networks.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
@@ -216,10 +212,37 @@ def setup_training_loop_kwargs(
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
 
+    if cfg == 'aydao':
+        args.loss_kwargs.pl_weight = 0
+        args.loss_kwargs.style_mixing_prob = 0
+
+        args.G_kwargs.z_dim = 1024
+        args.G_kwargs.w_dim = 1024
+        args.G_kwargs.mapping_kwargs.num_layers = 4
+        args.G_kwargs.synthesis_kwargs.channel_base = 32 << 10
+        args.G_kwargs.synthesis_kwargs.channel_max = 1024
+        args.G_kwargs.synthesis_kwargs.num_fp16_res = 4
+
+        # args.D_kwargs.channel_base = 32 << 10
+        # args.D_kwargs.channel_max = 1024
+        args.D_kwargs.num_fp16_res = 4
+        args.D_kwargs.epilogue_kwargs.mbstd_group_size = 32
+        args.D_kwargs.epilogue_kwargs.mbstd_num_channels = 4
+
+        args.batch_size = 28
+        args.batch_gpu = 7
+
     if cfg == 'cifar':
         args.loss_kwargs.pl_weight = 0 # disable path length regularization
         args.loss_kwargs.style_mixing_prob = 0 # disable style mixing
         args.D_kwargs.architecture = 'orig' # disable residual skip connections
+
+    if glrate is not None:
+        assert isinstance(glrate, float)
+        args.G_opt_kwargs.lr = glrate
+    if dlrate is not None:
+        assert isinstance(dlrate, float)
+        args.G_opt_kwargs.lr = dlrate
 
     if gamma is not None:
         assert isinstance(gamma, float)
@@ -376,12 +399,6 @@ def setup_training_loop_kwargs(
     if nobench:
         args.cudnn_benchmark = False
 
-    if allow_tf32 is None:
-        allow_tf32 = False
-    assert isinstance(allow_tf32, bool)
-    if allow_tf32:
-        args.allow_tf32 = True
-
     if workers is not None:
         assert isinstance(workers, int)
         if not workers >= 1:
@@ -447,7 +464,8 @@ class CommaSeparatedList(click.ParamType):
 
 # Base config.
 @click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', '11gb-gpu','11gb-gpu-complex', '24gb-gpu','24gb-gpu-complex', '48gb-gpu','48gb-2gpu', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar', 'cifarbaseline', 'aydao']))
-@click.option('--lrate', help='Override learning rate', type=float, metavar='FLOAT')
+@click.option('--glrate', help='Override Generator learning rate', type=float, metavar='FLOAT')
+@click.option('--dlrate', help='Override Discriminator learning rate', type=float, metavar='FLOAT')
 @click.option('--gamma', help='Override R1 gamma', type=float)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--nkimg',  help='Override starting count', type=int, metavar='INT')
@@ -457,7 +475,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--aug', help='Augmentation mode [default: ada]', type=click.Choice(['noaug', 'ada', 'fixed']))
 @click.option('--p', help='Augmentation probability for --aug=fixed', type=float)
 @click.option('--target', help='ADA target value for --aug=ada', type=float)
-@click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
+@click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['custom', 'blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
 @click.option('--initstrength', help='Override ADA strength at start', type=float)
 
 # Transfer learning.
@@ -468,7 +486,6 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
 @click.option('--nhwc', help='Use NHWC memory format with FP16', type=bool, metavar='BOOL')
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
-@click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
 
 def main(ctx, outdir, dry_run, **config_kwargs):
