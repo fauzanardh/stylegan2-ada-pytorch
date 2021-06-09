@@ -186,6 +186,16 @@ def make_transform(
         img = img.resize((ww, hh), resample)
         return np.array(img)
 
+    def top_crop(width, height, img):
+        h, w = img.shape[:2]
+        crop = np.min(img.shape[:2])
+        begin = np.asarray([0, w - crop]) / 2
+        begin = begin.astype(np.int32)
+        img = img[begin[0]:begin[0]+crop, begin[1]:begin[1]+crop, :]
+        img = PIL.Image.fromarray(img, 'RGB')
+        img = img.resize((width, height), resample)
+        return np.array(img)
+
     def center_crop(width, height, img):
         crop = np.min(img.shape[:2])
         img = img[(img.shape[0] - crop) // 2 : (img.shape[0] + crop) // 2, (img.shape[1] - crop) // 2 : (img.shape[1] + crop) // 2]
@@ -209,6 +219,10 @@ def make_transform(
 
     if transform is None:
         return functools.partial(scale, output_width, output_height)
+    if transform == 'top-crop':
+        if (output_width is None) or (output_height is None):
+            error ('must specify --width and --height when using ' + transform + 'transform')
+        return functools.partial(top_crop, output_width, output_height)
     if transform == 'center-crop':
         if (output_width is None) or (output_height is None):
             error ('must specify --width and --height when using ' + transform + 'transform')
@@ -278,7 +292,7 @@ def open_dest(dest: str) -> Tuple[str, Callable[[str, Union[bytes, str]], None],
 @click.option('--dest', help='Output directory or archive name for output dataset', required=True, metavar='PATH')
 @click.option('--max-images', help='Output only up to `max-images` images', type=int, default=None)
 @click.option('--resize-filter', help='Filter to use when resizing images for output resolution', type=click.Choice(['box', 'lanczos']), default='lanczos', show_default=True)
-@click.option('--transform', help='Input crop/resize mode', type=click.Choice(['center-crop', 'center-crop-wide']))
+@click.option('--transform', help='Input crop/resize mode', type=click.Choice(['top-crop', 'center-crop', 'center-crop-wide']))
 @click.option('--width', help='Output width', type=int)
 @click.option('--height', help='Output height', type=int)
 def convert_dataset(
