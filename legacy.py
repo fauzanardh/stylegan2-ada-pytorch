@@ -158,7 +158,13 @@ def convert_tf_generator(tf_G):
         pass
     unknown_kwargs = list(set(tf_kwargs.keys()) - known_kwargs)
     if len(unknown_kwargs) > 0:
-        raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
+        print('Unknown TensorFlow data! This may result in problems with your converted model.')
+        print(unknown_kwargs)
+        #raise ValueError('Unknown TensorFlow kwargs:', unknown_kwargs)
+        # raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
+    # try: 
+        # if ex_kwargs['verbose'] is True: print(kwargs.synthesis_kwargs)
+    # except: pass
 
     # Collect params.
     tf_params = _collect_tf_params(tf_G)
@@ -257,7 +263,10 @@ def convert_tf_discriminator(tf_D):
     del tf_kwargs["resolution_w"]
     unknown_kwargs = list(set(tf_kwargs.keys()) - known_kwargs)
     if len(unknown_kwargs) > 0:
-        raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
+        print('Unknown TensorFlow data! This may result in problems with your converted model.')
+        print(unknown_kwargs)
+        # originally this repo threw errors:
+        # raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
 
     # Collect params.
     tf_params = _collect_tf_params(tf_D)
