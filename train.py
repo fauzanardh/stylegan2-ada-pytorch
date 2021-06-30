@@ -51,6 +51,7 @@ def setup_training_loop_kwargs(
     kimg       = None, # Override training duration: <int>
     nkimg      = None, # Override starting count
     batch      = None, # Override batch size: <int>
+    topk       = None, # set top-k percentage
 
     # Discriminator augmentation.
     aug        = None, # Augmentation mode: 'ada' (default), 'noaug', 'fixed'
@@ -270,6 +271,12 @@ def setup_training_loop_kwargs(
         args.batch_size = batch
         args.batch_gpu = batch // gpus
 
+    if topk is not None:
+        assert isinstance(topk, float)
+        args.loss_kwargs.G_top_k = True
+        args.loss_kwargs.G_top_k_gamma = topk
+        args.loss_kwargs.G_top_k_frac = 0.5
+
     # ---------------------------------------------------
     # Discriminator augmentation: aug, p, target, augpipe
     # ---------------------------------------------------
@@ -470,6 +477,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--nkimg',  help='Override starting count', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
+@click.option('--topk', help='Enable topk training [default: None]', type=float, metavar='FLOAT')
 
 # Discriminator augmentation.
 @click.option('--aug', help='Augmentation mode [default: ada]', type=click.Choice(['noaug', 'ada', 'fixed']))
