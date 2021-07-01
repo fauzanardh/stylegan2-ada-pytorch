@@ -222,16 +222,18 @@ def setup_training_loop_kwargs(
         args.G_kwargs.mapping_kwargs.num_layers = 4
         args.G_kwargs.synthesis_kwargs.channel_base = 32 << 10
         args.G_kwargs.synthesis_kwargs.channel_max = 1024
-        args.G_kwargs.synthesis_kwargs.num_fp16_res = 4
+        args.G_kwargs.synthesis_kwargs.num_fp16_res = 6
 
-        # args.D_kwargs.channel_base = 32 << 10
-        # args.D_kwargs.channel_max = 1024
-        args.D_kwargs.num_fp16_res = 4
+        args.D_kwargs.num_fp16_res = 6
         args.D_kwargs.epilogue_kwargs.mbstd_group_size = 32
         args.D_kwargs.epilogue_kwargs.mbstd_num_channels = 4
 
         args.batch_size = 28
         args.batch_gpu = 7
+
+        args.loss_kwargs.G_top_k = True
+        args.loss_kwargs.G_top_k_gamma = 0.9726
+        args.loss_kwargs.G_top_k_frac = 0.5
 
     if cfg == 'cifar':
         args.loss_kwargs.pl_weight = 0 # disable path length regularization
